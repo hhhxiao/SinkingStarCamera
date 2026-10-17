@@ -1,0 +1,8 @@
+build/
+dist/
+*.log
+*.dmp
+*.user
+.vs/
+x64/
+third/
