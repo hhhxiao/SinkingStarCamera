@@ -8,6 +8,8 @@
 #include "camera.h"
 #include "config.h"
 #include "logger.h"
+#include "overlay_grid.h"
+#include "overlay_panel.h"
 
 namespace {
 
@@ -22,6 +24,8 @@ namespace {
         config::print_all_info();
 
         camera::init();
+        overlay::init();
+        panel::init();
 
         int hz = config::poll_hz();
         const auto period = std::chrono::milliseconds(1000 / hz);

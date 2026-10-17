@@ -13,6 +13,8 @@
 #include "logger.h"
 #include "mem.h"
 #include "scanner.h"
+#include "overlay_grid.h"
+#include "overlay_panel.h"
 
 namespace camera {
 
@@ -223,6 +225,8 @@ namespace camera {
                 LOG("top-down view -> %s", g_top_down ? "ON (camera straight above, no tilt)" : "OFF");
             }
             if (pressed(VK_F4)) reset();
+            if (pressed(VK_F5)) overlay::toggle();
+            if (pressed(VK_F2)) panel::toggle();
 
             for (int vk = 0x01; vk < 0x100; ++vk) prev[vk] = cur[vk];
         }
@@ -299,6 +303,21 @@ namespace camera {
     }
 
     float fov_scale() { return g_fov_scale; }
+
+    void set_scale(float scale) {
+        if (!(scale > 0.0f)) return;
+        g_scale = scale < config::zoom_min() ? config::zoom_min()
+                                             : (scale > config::zoom_max() ? config::zoom_max() : scale);
+    }
+
+    void set_fov_scale(float scale) {
+        if (!(scale > 0.0f)) return;
+        g_fov_scale = scale < config::fov_min() ? config::fov_min()
+                                                : (scale > config::fov_max() ? config::fov_max() : scale);
+    }
+
+    bool top_down() { return g_top_down; }
+    void set_top_down(bool on) { g_top_down = on; }
 
     float scale() { return g_scale; }
 

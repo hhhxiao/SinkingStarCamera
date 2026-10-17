@@ -26,6 +26,15 @@ namespace config {
     float fov_min();
     float fov_max();
 
+    bool grid_enabled();
+    float grid_cell();
+    int grid_range();
+    float grid_offset();
+    int grid_width();
+    int grid_color_r();
+    int grid_color_g();
+    int grid_color_b();
+
 }  // namespace config
 
 #endif

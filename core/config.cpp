@@ -26,6 +26,15 @@ namespace config {
         float g_fov_min = 0.1f;
         float g_fov_max = 3.0f;
 
+        bool g_grid_enabled = false;
+        float g_grid_cell = 1.0f;
+        int g_grid_range = 20;
+        float g_grid_offset = 0.5f;
+        int g_grid_width = 2;
+        int g_grid_color_r = 0;
+        int g_grid_color_g = 0;
+        int g_grid_color_b = 0;
+
     }  // namespace
 
     void init() {
@@ -65,6 +74,25 @@ namespace config {
             g_fov_step = std::clamp(g_fov_step, 1.01f, 4.0f);
             g_fov_min = std::clamp(g_fov_min, 0.05f, 1.0f);
             g_fov_max = std::clamp(g_fov_max, 1.0f, 4.0f);
+
+            if (data.contains("grid") && data["grid"].is_object()) {
+                const auto &gr = data["grid"];
+                g_grid_enabled = gr.value("enabled", g_grid_enabled);
+                g_grid_cell = gr.value("cell", g_grid_cell);
+                g_grid_range = gr.value("range", g_grid_range);
+                g_grid_offset = gr.value("offset", g_grid_offset);
+                g_grid_width = gr.value("width", g_grid_width);
+                g_grid_color_r = gr.value("color_r", g_grid_color_r);
+                g_grid_color_g = gr.value("color_g", g_grid_color_g);
+                g_grid_color_b = gr.value("color_b", g_grid_color_b);
+            }
+            if (!(g_grid_cell > 0.01f)) g_grid_cell = 1.0f;
+            if (g_grid_range < 1 || g_grid_range > 200) g_grid_range = 20;
+            if (g_grid_offset < -2.0f || g_grid_offset > 2.0f) g_grid_offset = 0.5f;
+            if (g_grid_width < 1 || g_grid_width > 8) g_grid_width = 2;
+            if (g_grid_color_r < 0 || g_grid_color_r > 255) g_grid_color_r = 0;
+            if (g_grid_color_g < 0 || g_grid_color_g > 255) g_grid_color_g = 0;
+            if (g_grid_color_b < 0 || g_grid_color_b > 255) g_grid_color_b = 0;
         } catch (std::exception &e) {
             ERR("Using defaults, config load failed: %s", e.what());
         }
@@ -83,6 +111,12 @@ namespace config {
         DBG("fov.step           = %.3f", g_fov_step);
         DBG("fov.min            = %.3f", g_fov_min);
         DBG("fov.max            = %.3f", g_fov_max);
+        DBG("grid.enabled       = %d", (int)g_grid_enabled);
+        DBG("grid.cell          = %.3f", g_grid_cell);
+        DBG("grid.range         = %d", g_grid_range);
+        DBG("grid.offset        = %.3f", g_grid_offset);
+        DBG("grid.width         = %d", g_grid_width);
+        DBG("grid.color         = %d,%d,%d", g_grid_color_r, g_grid_color_g, g_grid_color_b);
     }
 
     bool debug_mode() { return g_debug_mode; }
@@ -97,5 +131,13 @@ namespace config {
     float fov_step() { return g_fov_step; }
     float fov_min() { return g_fov_min; }
     float fov_max() { return g_fov_max; }
+    bool grid_enabled() { return g_grid_enabled; }
+    float grid_cell() { return g_grid_cell; }
+    int grid_range() { return g_grid_range; }
+    float grid_offset() { return g_grid_offset; }
+    int grid_width() { return g_grid_width; }
+    int grid_color_r() { return g_grid_color_r; }
+    int grid_color_g() { return g_grid_color_g; }
+    int grid_color_b() { return g_grid_color_b; }
 
 }  // namespace config

@@ -11,6 +11,8 @@ include_directories(
     ${PROJECT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/third
+    ${PROJECT_SOURCE_DIR}/third/imgui
+    ${PROJECT_SOURCE_DIR}/third/imgui/backends
 )
 
 add_compile_options(/wd4819 /MP)
@@ -21,12 +23,20 @@ add_library(orthocam SHARED
     dllmain.cpp
     core/camera.cpp
     core/config.cpp
+    core/overlay_grid.cpp
+    core/overlay_panel.cpp
     core/scanner.cpp
     tools/logger.cpp
     tools/misc.cpp
+    third/imgui/imgui.cpp
+    third/imgui/imgui_draw.cpp
+    third/imgui/imgui_tables.cpp
+    third/imgui/imgui_widgets.cpp
+    third/imgui/backends/imgui_impl_win32.cpp
+    third/imgui/backends/imgui_impl_dx11.cpp
 )
 
-target_link_libraries(orthocam psapi)
+target_link_libraries(orthocam psapi d3d11 dxgi)
 set_target_properties(orthocam PROPERTIES OUTPUT_NAME "sinkingstar_camera" PREFIX "")
 
 # Loader: waits for the game and injects the dll via CreateRemoteThread.

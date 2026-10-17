@@ -54,6 +54,10 @@ namespace camera {
     void nudge_fov(float factor);
     float scale();
     float fov_scale();
+    void set_scale(float scale);
+    void set_fov_scale(float scale);
+    bool top_down();
+    void set_top_down(bool on);
     size_t entity_count();
 
 }  // namespace camera
