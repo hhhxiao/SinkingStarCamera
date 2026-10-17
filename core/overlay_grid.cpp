@@ -76,6 +76,35 @@ namespace overlay {
             }
         }
 
+        bool valid_view_matrix(const float *v, const float origin[3]) {
+            // A camera view matrix is a rigid transform: orthonormal 3x3 rotation
+            // and a 0,0,0,1 bottom row. build17 has other matrices with the same
+            // sparse projection shape earlier in memory, so shape alone is not
+            // enough to identify the live viewpoint.
+            if (fabsf(v[12]) > 1.0e-4f || fabsf(v[13]) > 1.0e-4f || fabsf(v[14]) > 1.0e-4f ||
+                fabsf(v[15] - 1.0f) > 1.0e-4f)
+                return false;
+
+            const float *r0 = v + 0;
+            const float *r1 = v + 4;
+            const float *r2 = v + 8;
+            const float l0 = r0[0] * r0[0] + r0[1] * r0[1] + r0[2] * r0[2];
+            const float l1 = r1[0] * r1[0] + r1[1] * r1[1] + r1[2] * r1[2];
+            const float l2 = r2[0] * r2[0] + r2[1] * r2[1] + r2[2] * r2[2];
+            if (fabsf(l0 - 1.0f) > 0.02f || fabsf(l1 - 1.0f) > 0.02f || fabsf(l2 - 1.0f) > 0.02f)
+                return false;
+            const float d01 = r0[0] * r1[0] + r0[1] * r1[1] + r0[2] * r1[2];
+            const float d02 = r0[0] * r2[0] + r0[1] * r2[1] + r0[2] * r2[2];
+            const float d12 = r1[0] * r2[0] + r1[1] * r2[1] + r1[2] * r2[2];
+            if (fabsf(d01) > 0.02f || fabsf(d02) > 0.02f || fabsf(d12) > 0.02f) return false;
+
+            // The world-space camera origin must map to the view-space origin.
+            const float ox = v[0] * origin[0] + v[1] * origin[1] + v[2] * origin[2] + v[3];
+            const float oy = v[4] * origin[0] + v[5] * origin[1] + v[6] * origin[2] + v[7];
+            const float oz = v[8] * origin[0] + v[9] * origin[1] + v[10] * origin[2] + v[11];
+            return fabsf(ox) < 0.1f && fabsf(oy) < 0.1f && fabsf(oz) < 0.1f;
+        }
+
         // The projection matrix is the most distinctive thing in the process: a
         // 1.0f at m[12] followed by 0.0f, with the sparse shape above. Scanning for
         // that pair and verifying the shape finds it without any game address.
@@ -94,6 +123,7 @@ namespace overlay {
                 if (!copy_guard(reinterpret_cast<const void *>(matrix + 0x40), origin, sizeof(origin))) continue;
                 const float olen = sqrtf(origin[0] * origin[0] + origin[1] * origin[1] + origin[2] * origin[2]);
                 if (!(olen > 0.01f && olen < 100000.0f)) continue;
+                if (!valid_view_matrix(view, origin)) continue;
                 std::memcpy(out.proj, m, sizeof(m));
                 std::memcpy(out.view, view, sizeof(view));
                 std::memcpy(out.origin, origin, sizeof(origin));
