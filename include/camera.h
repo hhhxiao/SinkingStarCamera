@@ -18,7 +18,7 @@ namespace camera {
     //   0x364  south_distance
     //   0x368  look_at_south_distance
     //   0x36C  room_pan_rate
-    //   0x378  orthoness (read as a byte by the engine)
+    //   0x378  orthoness (engine field; this mod does not modify it)
     //
     // The mod multiplies the three *distance* fields by the same factor, which is
     // what moves the overworld camera closer to or further from the map. The
@@ -36,7 +36,7 @@ namespace camera {
         float look_at_south_distance;   // +0x368
         float room_pan_rate;            // +0x36C
         uint8_t _pad2[0x8];
-        uint8_t orthoness;              // +0x378
+        uint8_t orthoness;              // +0x378 (engine field; not modified)
         uint8_t _pad2b[3];
         float fov_expansion;            // +0x37C
         float fog_blur;                 // +0x380

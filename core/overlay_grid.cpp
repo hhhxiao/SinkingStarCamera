@@ -104,27 +104,107 @@ namespace overlay {
             return false;
         }
 
-        // World -> screen. The view matrix convention (row or column vector) is
-        // decided by projecting the camera's own origin: it must land in the middle
-        // of the screen.
-        bool project(const CameraState &cam, const float world[3], float &sx, float &sy, int width, int height) {
+        void world_to_view(const CameraState &cam, const float world[3], float v[4]) {
             // Both matrices are stored row major but applied to column vectors
-            // (v_view = V * v, clip = P * v). The dumped view matrix puts the
-            // translation in the fourth column, which is what pins this down.
-            float v[4];
+            // (v_view = V * v, clip = P * v).
             for (int r = 0; r < 4; ++r)
                 v[r] = cam.view[r * 4 + 0] * world[0] + cam.view[r * 4 + 1] * world[1] +
                        cam.view[r * 4 + 2] * world[2] + cam.view[r * 4 + 3];
+        }
+
+        bool project_view(const CameraState &cam, const float v[4], float &sx, float &sy, int width, int height) {
             float clip[4];
             for (int r = 0; r < 4; ++r)
                 clip[r] = cam.proj[r * 4 + 0] * v[0] + cam.proj[r * 4 + 1] * v[1] +
                           cam.proj[r * 4 + 2] * v[2] + cam.proj[r * 4 + 3] * v[3];
-            if (fabsf(clip[3]) < 1.0e-6f) return false;
+            if (clip[3] <= 1.0e-6f) return false;
             const float ndc_x = clip[0] / clip[3];
             const float ndc_y = clip[1] / clip[3];
-            if (!(ndc_x > -50.0f && ndc_x < 50.0f && ndc_y > -50.0f && ndc_y < 50.0f)) return false;
+            if (!std::isfinite(ndc_x) || !std::isfinite(ndc_y)) return false;
             sx = (ndc_x * 0.5f + 0.5f) * width;
             sy = (1.0f - (ndc_y * 0.5f + 0.5f)) * height;
+            return true;
+        }
+
+        // World -> screen for a single point. Points behind the camera are
+        // rejected; segments use project_segment() so the visible part survives.
+        bool project(const CameraState &cam, const float world[3], float &sx, float &sy, int width, int height) {
+            float v[4];
+            world_to_view(cam, world, v);
+            return project_view(cam, v, sx, sy, width, height);
+        }
+
+        struct ClipVertex {
+            float x, y, z, w;
+        };
+
+        void world_to_clip(const CameraState &cam, const float world[3], ClipVertex &out) {
+            float v[4];
+            world_to_view(cam, world, v);
+            out.x = cam.proj[0] * v[0] + cam.proj[1] * v[1] + cam.proj[2] * v[2] + cam.proj[3] * v[3];
+            out.y = cam.proj[4] * v[0] + cam.proj[5] * v[1] + cam.proj[6] * v[2] + cam.proj[7] * v[3];
+            out.z = cam.proj[8] * v[0] + cam.proj[9] * v[1] + cam.proj[10] * v[2] + cam.proj[11] * v[3];
+            out.w = cam.proj[12] * v[0] + cam.proj[13] * v[1] + cam.proj[14] * v[2] + cam.proj[15] * v[3];
+        }
+
+        float clip_distance(const ClipVertex &p, int plane) {
+            switch (plane) {
+                case 0: return p.w - 0.05f;  // near
+                case 1: return p.x + p.w;    // left
+                case 2: return p.w - p.x;    // right
+                case 3: return p.y + p.w;    // bottom
+                default: return p.w - p.y;   // top
+            }
+        }
+
+        // Clips a homogeneous segment against the near plane and the four side
+        // planes of the viewport. The old code instead rejected a segment when
+        // either endpoint was more than 50 NDC units outside the screen. A grid
+        // line crossing the camera can have an endpoint thousands of units away
+        // even though the visible part runs across the whole screen, so that
+        // check discarded one entire grid direction at common camera angles.
+        bool clip_segment(ClipVertex &a, ClipVertex &b) {
+            for (int plane = 0; plane < 5; ++plane) {
+                const float da = clip_distance(a, plane);
+                const float db = clip_distance(b, plane);
+                if (da < 0.0f && db < 0.0f) return false;
+                if (da < 0.0f) {
+                    const float t = da / (da - db);
+                    a.x += (b.x - a.x) * t;
+                    a.y += (b.y - a.y) * t;
+                    a.z += (b.z - a.z) * t;
+                    a.w += (b.w - a.w) * t;
+                } else if (db < 0.0f) {
+                    const float t = db / (db - da);
+                    b.x += (a.x - b.x) * t;
+                    b.y += (a.y - b.y) * t;
+                    b.z += (a.z - b.z) * t;
+                    b.w += (a.w - b.w) * t;
+                }
+            }
+            return true;
+        }
+
+        // Projects a world-space segment after clipping it to the viewport.
+        // Clipping keeps the visible part of long lines instead of dropping the
+        // whole segment when an endpoint is off-screen or behind the camera.
+        bool project_segment(const CameraState &cam, const float a[3], const float b[3], float &x0, float &y0,
+                             float &x1, float &y1, int width, int height) {
+            ClipVertex ca{}, cb{};
+            world_to_clip(cam, a, ca);
+            world_to_clip(cam, b, cb);
+            if (!clip_segment(ca, cb)) return false;
+            if (!(ca.w > 1.0e-6f) || !(cb.w > 1.0e-6f)) return false;
+            const float nax = ca.x / ca.w;
+            const float nay = ca.y / ca.w;
+            const float nbx = cb.x / cb.w;
+            const float nby = cb.y / cb.w;
+            if (!std::isfinite(nax) || !std::isfinite(nay) || !std::isfinite(nbx) || !std::isfinite(nby))
+                return false;
+            x0 = (nax * 0.5f + 0.5f) * width;
+            y0 = (1.0f - (nay * 0.5f + 0.5f)) * height;
+            x1 = (nbx * 0.5f + 0.5f) * width;
+            y1 = (1.0f - (nby * 0.5f + 0.5f)) * height;
             return true;
         }
 
@@ -158,6 +238,7 @@ namespace overlay {
         std::atomic<float> grid_offset_value{0.5f};
         std::atomic<int> grid_range_value{20};
         std::atomic<bool> g_running{false};
+        std::atomic<bool> g_external_renderer{false};
 
         struct WindowSearch {
             DWORD pid = 0;
@@ -221,6 +302,34 @@ namespace overlay {
             return hwnd;
         }
 
+        void collect_grid(const CameraState &cam, float width, float height, std::vector<ScreenLine> &out) {
+            out.clear();
+            const float cell = grid_cell_value.load();
+            const int range = grid_range_value.load();
+            const float offset = grid_offset_value.load();  // in cells
+            if (cell <= 0.001f || range <= 0 || range > 200) return;
+            // Grid centred on the camera, snapped to the cell lattice. The ground
+            // plane is XY with Z up.
+            const float cx = (floorf(cam.origin[0] / cell) + offset) * cell;
+            const float cy = (floorf(cam.origin[1] / cell) + offset) * cell;
+            const float span = range * cell;
+            for (int i = -range; i <= range; ++i) {
+                const float x = cx + i * cell;
+                float x0, y0, x1, y1;
+                const float a[3] = {x, cy - span, 0.0f};
+                const float b[3] = {x, cy + span, 0.0f};
+                if (project_segment(cam, a, b, x0, y0, x1, y1, width, height)) {
+                    out.push_back({x0, y0, x1, y1});
+                }
+                const float y = cy + i * cell;
+                const float c[3] = {cx - span, y, 0.0f};
+                const float d[3] = {cx + span, y, 0.0f};
+                if (project_segment(cam, c, d, x0, y0, x1, y1, width, height)) {
+                    out.push_back({x0, y0, x1, y1});
+                }
+            }
+        }
+
         void draw_grid(HDC target, int width, int height, const CameraState &cam) {
             // Double buffered: painting straight into the window DC flickered.
             static HDC mem_dc = nullptr;
@@ -244,20 +353,13 @@ namespace overlay {
             FillRect(dc, &full, key);
             DeleteObject(key);
 
-            const float cell = grid_cell_value.load();
-            const int range = grid_range_value.load();
-            const float offset = grid_offset_value.load();  // in cells
-            if (cell <= 0.001f || range <= 0 || range > 200) {
+            std::vector<ScreenLine> lines;
+            collect_grid(cam, (float)width, (float)height, lines);
+            if (lines.empty()) {
                 SelectObject(dc, old_pen);
                 DeleteObject(pen);
                 return;
             }
-            // Grid centred on the camera, snapped to the cell lattice. The ground
-            // plane is XY with Z up.
-            const float cx = (floorf(cam.origin[0] / cell) + offset) * cell;
-            const float cy = (floorf(cam.origin[1] / cell) + offset) * cell;
-            const float span = range * cell;
-            size_t lines = 0;
             // Bounding box of everything we draw, so the window can be clipped to
             // it: the DWM compositing a full 4K layered surface is what cost the
             // frame rate, not the line count.
@@ -268,31 +370,15 @@ namespace overlay {
                 if (x > max_x) max_x = (int)x;
                 if (y > max_y) max_y = (int)y;
             };
-            for (int i = -range; i <= range; ++i) {
-                const float x = cx + i * cell;
-                float x0, y0, x1, y1;
-                const float a[3] = {x, cy - span, 0.0f};
-                const float b[3] = {x, cy + span, 0.0f};
-                if (project(cam, a, x0, y0, width, height) && project(cam, b, x1, y1, width, height)) {
-                    MoveToEx(dc, (int)x0, (int)y0, nullptr);
-                    LineTo(dc, (int)x1, (int)y1);
-                    include(x0, y0);
-                    include(x1, y1);
-                    ++lines;
-                }
-                const float y = cy + i * cell;
-                const float c[3] = {cx - span, y, 0.0f};
-                const float d[3] = {cx + span, y, 0.0f};
-                if (project(cam, c, x0, y0, width, height) && project(cam, d, x1, y1, width, height)) {
-                    MoveToEx(dc, (int)x0, (int)y0, nullptr);
-                    LineTo(dc, (int)x1, (int)y1);
-                    include(x0, y0);
-                    include(x1, y1);
-                    ++lines;
-                }
+            for (const auto &line : lines) {
+                MoveToEx(dc, (int)line.x0, (int)line.y0, nullptr);
+                LineTo(dc, (int)line.x1, (int)line.y1);
+                include(line.x0, line.y0);
+                include(line.x1, line.y1);
             }
             static std::atomic<int> logged{0};
-            if (logged.fetch_add(1) < 3) LOG("overlay: drew %zu grid lines (cell %.3f)", lines, cell);
+            if (logged.fetch_add(1) < 3)
+                LOG("overlay: drew %zu grid lines (cell %.3f)", lines.size(), grid_cell_value.load());
 
             // A cross at the camera origin: the first thing to look at when
             // checking that the projection lines up with the world.
@@ -331,6 +417,11 @@ namespace overlay {
         void overlay_thread() {
             g_running = true;
             while (g_running) {
+                if (g_external_renderer.load()) {
+                    if (g_overlay) ShowWindow(g_overlay, SW_HIDE);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    continue;
+                }
                 if (!g_enabled.load()) {
                     if (g_overlay) ShowWindow(g_overlay, SW_HIDE);
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -420,6 +511,9 @@ namespace overlay {
         set_color(config::grid_color_r(), config::grid_color_g(), config::grid_color_b());
         if (!config::grid_enabled()) {
             LOG("overlay: grid disabled by config (F5 toggles it at runtime)");
+        } else {
+            g_enabled = true;
+            LOG("overlay: grid enabled by config");
         }
         std::thread(overlay_thread).detach();
         std::thread([] {
@@ -509,6 +603,28 @@ namespace overlay {
     }
 
     bool enabled() { return g_enabled.load(); }
+
+    void set_external_renderer(bool on) {
+        g_external_renderer = on;
+        if (on && g_overlay) ShowWindow(g_overlay, SW_HIDE);
+        LOG("overlay: external renderer -> %s", on ? "ON (layered window disabled)" : "OFF");
+    }
+
+    bool external_renderer() { return g_external_renderer.load(); }
+
+    bool grid_lines(std::vector<ScreenLine> &out, float width, float height) {
+        CameraState cam;
+        {
+            std::lock_guard<std::mutex> lock(g_camera_lock);
+            cam = g_camera;
+        }
+        if (!cam.valid) {
+            out.clear();
+            return false;
+        }
+        collect_grid(cam, width, height, out);
+        return !out.empty();
+    }
 
     void set_enabled(bool on) {
         if (g_enabled.exchange(on) == on) return;

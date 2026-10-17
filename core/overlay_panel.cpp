@@ -3,11 +3,14 @@
 #include <Windows.h>
 #include <d3d11.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
 
 #include "camera.h"
+#include "config.h"
+#include "d3d12_overlay.h"
 #include "imgui/backends/imgui_impl_dx11.h"
 #include "imgui/backends/imgui_impl_win32.h"
 #include "imgui/imgui.h"
@@ -30,6 +33,7 @@ namespace panel {
         HWND g_hwnd = nullptr;
 
         LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+            if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
             if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
             if (msg == WM_CLOSE) {
                 g_visible = false;
@@ -54,11 +58,12 @@ namespace panel {
             RegisterClassExW(&wc);
             // Borderless and owned by nothing: it just sits over the game's top
             // right corner like an overlay. No title bar, drag it with the mouse.
-            return CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"SinkingStarCameraPanel", L"SinkingStarCamera",
-                                   WS_POPUP, 120, 120, 460, 620, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            return CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"SinkingStarCameraPanel",
+                                   L"SinkingStarCamera", WS_POPUP, 120, 120, 460, 620, nullptr, nullptr,
+                                   GetModuleHandleW(nullptr), nullptr);
         }
 
-        void load_fonts(ImGuiIO &io) {
+        void load_fonts_impl(ImGuiIO &io) {
             // The default font has no CJK glyphs, which is why Chinese showed up as
             // question marks. Prefer Microsoft YaHei at a readable size.
             const wchar_t *candidates[] = {L"C:\\Windows\\Fonts\\msyh.ttc", L"C:\\Windows\\Fonts\\msyhbd.ttc",
@@ -130,13 +135,26 @@ namespace panel {
             g_device = nullptr;
         }
 
-        void draw_ui() {
+        void draw_ui_impl(bool in_game, float width, float height) {
             const ImGuiIO &io = ImGui::GetIO();
-            ImGui::SetNextWindowPos(ImVec2(0, 0));
-            ImGui::SetNextWindowSize(io.DisplaySize);
-            ImGui::Begin("SinkingStarCamera", nullptr,
-                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+            ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+            static bool in_game_placed = false;
+            if (in_game) {
+                // Place it once; after that ImGui owns the position and dragging
+                // works normally. Re-applying SetNextWindowPos every frame would
+                // snap the window back and make it feel fixed.
+                if (!in_game_placed) {
+                    ImGui::SetNextWindowPos(ImVec2(width - 476.0f, 16.0f));
+                    in_game_placed = true;
+                }
+                ImGui::SetNextWindowSize(ImVec2(460.0f, 720.0f), ImGuiCond_FirstUseEver);
+            } else {
+                flags |= ImGuiWindowFlags_NoMove;
+                ImGui::SetNextWindowPos(ImVec2(0, 0));
+                ImGui::SetNextWindowSize(io.DisplaySize);
+            }
+            ImGui::Begin("SinkingStarCamera", nullptr, flags);
 
             if (ImGui::CollapsingHeader("网格 Grid", ImGuiTreeNodeFlags_DefaultOpen)) {
                 bool on = overlay::enabled();
@@ -164,7 +182,28 @@ namespace panel {
                 }
             }
 
-            if (ImGui::CollapsingHeader("相机 Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (d3d12_overlay::doodle_supported() &&
+                ImGui::CollapsingHeader("涂鸦 Doodle", ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool doodling = d3d12_overlay::doodle_enabled();
+                if (ImGui::Checkbox("涂鸦模式 (F3)", &doodling)) d3d12_overlay::set_doodle_enabled(doodling);
+                int doodle_width = d3d12_overlay::doodle_width();
+                if (ImGui::SliderInt("涂鸦线宽", &doodle_width, 1, 16)) d3d12_overlay::set_doodle_width(doodle_width);
+                int r = 0, g = 0, b = 0;
+                d3d12_overlay::get_doodle_color(r, g, b);
+                float doodle_color[3] = {r / 255.0f, g / 255.0f, b / 255.0f};
+                if (ImGui::ColorEdit3("涂鸦线色", doodle_color)) {
+                    d3d12_overlay::set_doodle_color(static_cast<int>(doodle_color[0] * 255.0f + 0.5f),
+                                                    static_cast<int>(doodle_color[1] * 255.0f + 0.5f),
+                                                    static_cast<int>(doodle_color[2] * 255.0f + 0.5f));
+                }
+                bool straight = d3d12_overlay::doodle_straight();
+                if (ImGui::Checkbox("直线模式", &straight)) d3d12_overlay::set_doodle_straight(straight);
+                if (ImGui::Button("清空涂鸦 (Shift+F3)", ImVec2(-1, 0))) d3d12_overlay::clear_doodle();
+                ImGui::TextDisabled("左键拖动绘制；按住 Shift 拖动可临时画直线");
+            }
+
+            if (ImGui::CollapsingHeader("相机 Camera（实验性，只有部分关卡生效）",
+                                        ImGuiTreeNodeFlags_DefaultOpen)) {
                 float scale = camera::scale();
                 if (ImGui::SliderFloat("距离缩放 (F9/F10)", &scale, 0.05f, 8.0f, "%.3f")) camera::set_scale(scale);
                 float fov = camera::fov_scale();
@@ -176,7 +215,8 @@ namespace panel {
             }
 
             ImGui::Separator();
-            ImGui::TextDisabled("F2 关闭面板 / F5 网格 / F4 复位");
+            ImGui::TextDisabled("F2 面板 / F5 网格 / F11 叠加层显隐");
+            ImGui::TextDisabled("F3 涂鸦 / Shift+F3 清空 / F4 相机复位");
             ImGui::End();
         }
 
@@ -205,7 +245,10 @@ namespace panel {
                         std::this_thread::sleep_for(std::chrono::milliseconds(500));
                         continue;
                     }
-                    ShowWindow(g_hwnd, SW_SHOW);
+                    // Never take keyboard focus from the game: Q/Tab/Space and the
+                    // rest of the gameplay bindings must keep working while the
+                    // settings panel is open.
+                    ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
                     // Fixed position: top right of the desktop work area. The panel
                     // does not track the game window and does not hide when the game
                     // loses focus; F2 is the only thing that shows or hides it.
@@ -221,7 +264,7 @@ namespace panel {
                     }
                     IMGUI_CHECKVERSION();
                     ImGui::CreateContext();
-                    load_fonts(ImGui::GetIO());
+                    load_fonts_impl(ImGui::GetIO());
                     ImGui::StyleColorsDark();
                     ImGui_ImplWin32_Init(g_hwnd);
                     ImGui_ImplDX11_Init(g_device, g_context);
@@ -240,7 +283,7 @@ namespace panel {
                 ImGui_ImplDX11_NewFrame();
                 ImGui_ImplWin32_NewFrame();
                 ImGui::NewFrame();
-                draw_ui();
+                draw_ui_impl(false, ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
                 ImGui::Render();
 
                 const float clear[4] = {0.08f, 0.09f, 0.11f, 1.0f};
@@ -255,7 +298,14 @@ namespace panel {
 
     }  // namespace
 
-    void init() { std::thread(thread_main).detach(); }
+    void init() {
+        g_visible = config::panel_visible();
+        if (config::d3d12_enabled()) {
+            LOG("panel: in-game D3D12 mode (external window disabled)");
+            return;
+        }
+        std::thread(thread_main).detach();
+    }
 
     void toggle() {
         g_visible = !g_visible.load();
@@ -263,5 +313,9 @@ namespace panel {
     }
 
     bool visible() { return g_visible.load(); }
+
+    void draw_ui(bool in_game, float width, float height) { draw_ui_impl(in_game, width, height); }
+
+    void load_fonts() { load_fonts_impl(ImGui::GetIO()); }
 
 }  // namespace panel

@@ -35,6 +35,16 @@ namespace config {
     int grid_color_g();
     int grid_color_b();
 
+    // Route 2: draw into the game's own swapchain instead of a layered window.
+    bool d3d12_enabled();
+    bool d3d12_test();
+    bool panel_visible();
+    bool doodle_enabled();
+    int doodle_width();
+    int doodle_color_r();
+    int doodle_color_g();
+    int doodle_color_b();
+
 }  // namespace config
 
 #endif

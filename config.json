@@ -16,10 +16,24 @@
         "max": 3.0
     },
     "grid": {
-        "enabled": false,
+        "enabled": true,
         "cell": 1.0,
         "range": 20,
         "offset": 0.5,
+        "width": 2,
+        "color_r": 0,
+        "color_g": 0,
+        "color_b": 0
+    },
+    "d3d12": {
+        "enabled": true,
+        "test": false
+    },
+    "panel": {
+        "visible": false
+    },
+    "doodle": {
+        "enabled": false,
         "width": 2,
         "color_r": 0,
         "color_g": 0,

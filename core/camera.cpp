@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "config.h"
+#include "d3d12_overlay.h"
 #include "logger.h"
 #include "mem.h"
 #include "scanner.h"
@@ -24,6 +25,9 @@ namespace camera {
         constexpr size_t kUpDistanceOff = 0x360;
         constexpr size_t kFovOff = 0x340;
         constexpr size_t kMaxHits = 4096;
+        constexpr uintptr_t kGameStateRva = 0x7F7320;
+        constexpr size_t kComponentCapacityOff = 0x3A0;
+        constexpr size_t kComponentTableOff = 0x3C8;
 
         struct Entity {
             uintptr_t addr = 0;
@@ -163,6 +167,77 @@ namespace camera {
             std::thread(run_scan).detach();
         }
 
+        // The full memory scan is slow and can miss Camera_Control entities that
+        // are created when a level is loaded. The game keeps its live components
+        // in an open-addressed table at Game + 0x3C8; walking that table is cheap
+        // and sees the currently loaded level immediately.
+        bool read_component_table(std::vector<Entity> &found) {
+            HMODULE host = GetModuleHandleW(nullptr);
+            if (!host) return false;
+            const uintptr_t game = mem::read<uintptr_t>(reinterpret_cast<uintptr_t>(host) + kGameStateRva);
+            if (!game) return false;
+            const uint32_t capacity = mem::read<uint32_t>(game + kComponentCapacityOff);
+            const uintptr_t table = mem::read<uintptr_t>(game + kComponentTableOff);
+            if (capacity < 8 || capacity > (1u << 20) || !table) return false;
+            if (!mem::is_readable(table, static_cast<size_t>(capacity) * 16)) return false;
+
+            const uintptr_t needle = find_camera_type_info();
+            if (!needle) return false;
+
+            found.clear();
+            for (uint32_t i = 0; i < capacity; ++i) {
+                const uintptr_t entry = table + static_cast<uintptr_t>(i) * 16;
+                if (!mem::read<uint32_t>(entry)) continue;  // empty bucket
+                const uintptr_t entity = mem::read<uintptr_t>(entry + 8);
+                if (!entity || !mem::is_readable(entity, sizeof(CameraControl))) continue;
+                if (mem::read<void *>(entity + kEntityTypeInfoOff) != reinterpret_cast<void *>(needle)) continue;
+                if (find(found, entity)) continue;
+
+                const auto *cc = reinterpret_cast<const CameraControl *>(entity);
+                if (!sane(cc->fov_vertical, cc->z_near, cc->z_far)) continue;
+                if (!mem::is_writable(entity + kUpDistanceOff, 12)) continue;
+
+                Entity e{};
+                e.addr = entity;
+                e.orig_up = cc->up_distance;
+                e.orig_south = cc->south_distance;
+                e.orig_look_at_south = cc->look_at_south_distance;
+                e.orig_fov = cc->fov_vertical;
+                found.push_back(e);
+            }
+            return !found.empty();
+        }
+
+        void refresh_from_component_table() {
+            std::vector<Entity> found;
+            if (!read_component_table(found)) return;
+
+            std::lock_guard<std::mutex> lock(g_mutex);
+            for (auto &e : found) {
+                if (const Entity *prev = find(g_entities, e.addr)) {
+                    e.orig_up = prev->orig_up;
+                    e.orig_south = prev->orig_south;
+                    e.orig_look_at_south = prev->orig_look_at_south;
+                    e.orig_fov = prev->orig_fov;
+                }
+            }
+
+            bool changed = found.size() != g_entities.size();
+            if (!changed) {
+                for (size_t i = 0; i < found.size(); ++i) {
+                    if (found[i].addr != g_entities[i].addr) {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (changed) {
+                g_entities = std::move(found);
+                g_force_rescan = false;
+                LOG("fast camera refresh -> %zu entities", g_entities.size());
+            }
+        }
+
         void apply(const Entity &e, float scale) {
             mem::write<float>(e.addr + kUpDistanceOff + 0, e.orig_up * scale);
             // south_distance / look_at_south_distance are the horizontal offset that
@@ -227,6 +302,13 @@ namespace camera {
             if (pressed(VK_F4)) reset();
             if (pressed(VK_F5)) overlay::toggle();
             if (pressed(VK_F2)) panel::toggle();
+            if (pressed(VK_F11)) d3d12_overlay::toggle();
+            if (pressed(VK_F3)) {
+                if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+                    d3d12_overlay::clear_doodle();
+                else
+                    d3d12_overlay::toggle_doodle();
+            }
 
             for (int vk = 0x01; vk < 0x100; ++vk) prev[vk] = cur[vk];
         }
@@ -249,6 +331,15 @@ namespace camera {
             g_entities = std::move(g_pending);
             g_pending.clear();
             LOG("tracking %zu camera entities", g_entities.size());
+        }
+
+        // Refresh at ~2 Hz so entering a level picks up its camera entity without
+        // paying for another multi-second full heap scan.
+        static auto last_fast_refresh = std::chrono::steady_clock::time_point{};
+        const auto fast_now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(fast_now - last_fast_refresh).count() >= 500) {
+            last_fast_refresh = fast_now;
+            refresh_from_component_table();
         }
 
         const auto now = std::chrono::steady_clock::now();

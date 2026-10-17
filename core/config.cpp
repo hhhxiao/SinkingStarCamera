@@ -35,6 +35,15 @@ namespace config {
         int g_grid_color_g = 0;
         int g_grid_color_b = 0;
 
+        bool g_d3d12_enabled = false;
+        bool g_d3d12_test = true;
+        bool g_panel_visible = false;
+        bool g_doodle_enabled = false;
+        int g_doodle_width = 2;
+        int g_doodle_color_r = 0;
+        int g_doodle_color_g = 0;
+        int g_doodle_color_b = 0;
+
     }  // namespace
 
     void init() {
@@ -93,6 +102,27 @@ namespace config {
             if (g_grid_color_r < 0 || g_grid_color_r > 255) g_grid_color_r = 0;
             if (g_grid_color_g < 0 || g_grid_color_g > 255) g_grid_color_g = 0;
             if (g_grid_color_b < 0 || g_grid_color_b > 255) g_grid_color_b = 0;
+
+            if (data.contains("d3d12") && data["d3d12"].is_object()) {
+                const auto &dx = data["d3d12"];
+                g_d3d12_enabled = dx.value("enabled", g_d3d12_enabled);
+                g_d3d12_test = dx.value("test", g_d3d12_test);
+            }
+            if (data.contains("panel") && data["panel"].is_object()) {
+                g_panel_visible = data["panel"].value("visible", g_panel_visible);
+            }
+            if (data.contains("doodle") && data["doodle"].is_object()) {
+                const auto &doodle = data["doodle"];
+                g_doodle_enabled = doodle.value("enabled", g_doodle_enabled);
+                g_doodle_width = doodle.value("width", g_doodle_width);
+                g_doodle_color_r = doodle.value("color_r", g_doodle_color_r);
+                g_doodle_color_g = doodle.value("color_g", g_doodle_color_g);
+                g_doodle_color_b = doodle.value("color_b", g_doodle_color_b);
+            }
+            if (g_doodle_width < 1 || g_doodle_width > 16) g_doodle_width = 2;
+            if (g_doodle_color_r < 0 || g_doodle_color_r > 255) g_doodle_color_r = 0;
+            if (g_doodle_color_g < 0 || g_doodle_color_g > 255) g_doodle_color_g = 0;
+            if (g_doodle_color_b < 0 || g_doodle_color_b > 255) g_doodle_color_b = 0;
         } catch (std::exception &e) {
             ERR("Using defaults, config load failed: %s", e.what());
         }
@@ -117,6 +147,12 @@ namespace config {
         DBG("grid.offset        = %.3f", g_grid_offset);
         DBG("grid.width         = %d", g_grid_width);
         DBG("grid.color         = %d,%d,%d", g_grid_color_r, g_grid_color_g, g_grid_color_b);
+        DBG("d3d12.enabled      = %d", (int)g_d3d12_enabled);
+        DBG("d3d12.test         = %d", (int)g_d3d12_test);
+        DBG("panel.visible      = %d", (int)g_panel_visible);
+        DBG("doodle.enabled     = %d", (int)g_doodle_enabled);
+        DBG("doodle.width       = %d", g_doodle_width);
+        DBG("doodle.color       = %d,%d,%d", g_doodle_color_r, g_doodle_color_g, g_doodle_color_b);
     }
 
     bool debug_mode() { return g_debug_mode; }
@@ -139,5 +175,13 @@ namespace config {
     int grid_color_r() { return g_grid_color_r; }
     int grid_color_g() { return g_grid_color_g; }
     int grid_color_b() { return g_grid_color_b; }
+    bool d3d12_enabled() { return g_d3d12_enabled; }
+    bool d3d12_test() { return g_d3d12_test; }
+    bool panel_visible() { return g_panel_visible; }
+    bool doodle_enabled() { return g_doodle_enabled; }
+    int doodle_width() { return g_doodle_width; }
+    int doodle_color_r() { return g_doodle_color_r; }
+    int doodle_color_g() { return g_doodle_color_g; }
+    int doodle_color_b() { return g_doodle_color_b; }
 
 }  // namespace config

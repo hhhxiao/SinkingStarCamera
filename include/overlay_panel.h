@@ -8,6 +8,11 @@ namespace panel {
     void init();
     void toggle();  // F2
     bool visible();
+
+    // Shared by both backends. `in_game` pins the panel to the top right of the
+    // render target instead of filling a dedicated window.
+    void draw_ui(bool in_game, float width, float height);
+    void load_fonts();
 }  // namespace panel
 
 #endif
